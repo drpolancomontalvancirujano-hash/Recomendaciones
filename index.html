@@ -739,7 +739,7 @@
 
     <div class="config-row">
       <div class="config-label">Fecha de la cirugía</div>
-      <input type="date" class="config-input" id="fecha-cirugia" value="2026-03-21">
+      <input type="date" class="config-input" id="fecha-cirugia">
     </div>
 
     <div class="config-row">
@@ -816,9 +816,18 @@
   const DS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
   const MS=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+  // Poner min=hoy en el input al cargar
+  window.addEventListener('DOMContentLoaded', ()=>{
+    const hoyStr = new Date().toISOString().split('T')[0];
+    document.getElementById('fecha-cirugia').min = hoyStr;
+    document.getElementById('fecha-cirugia').value = hoyStr;
+  });
+
   function generarCal(){
     const fs = document.getElementById('fecha-cirugia').value;
     if(!fs){ alert('Ingrese la fecha de la cirugía'); return; }
+
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
 
     const cirugia = new Date(fs+'T12:00:00');
     const alta    = new Date(cirugia); alta.setDate(alta.getDate()+1);
@@ -826,66 +835,89 @@
     // primera sesión
     const inicio = new Date(cirugia); inicio.setDate(inicio.getDate()+inicioSel);
 
-    // generar sesiones
-    const sesiones=[];
+    // generar todas las sesiones
+    const todasSesiones=[];
     let cur=new Date(inicio);
     for(let i=0;i<sesSel;i++){
-      sesiones.push(new Date(cur));
+      todasSesiones.push(new Date(cur));
       cur=new Date(cur); cur.setDate(cur.getDate()+frecSel);
     }
 
-    const ultima=sesiones[sesiones.length-1];
-    document.getElementById('cal-sub').textContent=
-      sesSel+' sesiones · cada '+frecSel+' día'+(frecSel>1?'s':'')+
-      ' · hasta el '+fmtCorto(ultima);
+    // sesiones desde hoy en adelante (para la lista)
+    const sesionesHoy = todasSesiones.filter(d=>{ const dd=new Date(d); dd.setHours(0,0,0,0); return dd>=hoy; });
 
-    // agrupar por mes
+    // subheader
+    const ultima = todasSesiones[todasSesiones.length-1];
+    const pendientes = sesionesHoy.length;
+    document.getElementById('cal-sub').textContent=
+      sesSel+' sesiones totales · '+pendientes+' pendiente'+(pendientes!==1?'s':'')+
+      ' · cada '+frecSel+' día'+(frecSel>1?'s':'')+' · última: '+fmtCorto(ultima);
+
+    // agrupar por mes SOLO desde el mes actual en adelante
+    const mesHoy = hoy.getFullYear()*12 + hoy.getMonth();
     const meses=new Map();
-    [cirugia,alta,...sesiones].forEach(d=>{
+    // incluir cirugia y alta solo si su mes >= mes actual
+    [cirugia,alta,...todasSesiones].forEach(d=>{
+      const mesD = d.getFullYear()*12 + d.getMonth();
+      if(mesD < mesHoy) return; // saltar meses pasados
       const k=d.getFullYear()+'-'+d.getMonth();
-      if(!meses.has(k)) meses.set(k,{y:d.getFullYear(),m:d.getMonth(),ses:new Set(),esCir:false,esAlta:false});
+      if(!meses.has(k)) meses.set(k,{y:d.getFullYear(),m:d.getMonth(),ses:new Set()});
     });
-    sesiones.forEach(d=>{ const k=d.getFullYear()+'-'+d.getMonth(); meses.get(k).ses.add(d.getDate()); });
+    // marcar días de sesión por mes
+    todasSesiones.forEach(d=>{
+      const k=d.getFullYear()+'-'+d.getMonth();
+      if(meses.has(k)) meses.get(k).ses.add(d.getDate());
+    });
+    // marcar cirugía y alta
     const kCir=cirugia.getFullYear()+'-'+cirugia.getMonth();
     const kAlt=alta.getFullYear()+'-'+alta.getMonth();
-    meses.get(kCir).cirDia=cirugia.getDate();
-    meses.get(kAlt).altDia=alta.getDate();
+    if(meses.has(kCir)) meses.get(kCir).cirDia=cirugia.getDate();
+    if(meses.has(kAlt)) meses.get(kAlt).altDia=alta.getDate();
 
-    const hoy=new Date();
     let htmlM='';
     meses.forEach(({y,m,ses,cirDia,altDia})=>{
       const pD=new Date(y,m,1).getDay();
       const tD=new Date(y,m+1,0).getDate();
       htmlM+=`<div class="cal-mes"><span class="cal-mes-nombre">${MS[m]} ${y}</span><div class="cal-mes-grid">`;
-      ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'].forEach(d=>{ htmlM+=`<div class="cal-dia-head">${d}</div>`; });
+      ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'].forEach(dn=>{ htmlM+=`<div class="cal-dia-head">${dn}</div>`; });
       for(let e=0;e<pD;e++) htmlM+=`<div class="cal-dia"></div>`;
       for(let d=1;d<=tD;d++){
-        const fd=new Date(y,m,d);
-        let cls='cal-dia d'; let em=''; let lbl=''; let sn='';
-        if(d===cirDia)    { cls+=' cirugia'; em='🏥'; lbl='Cirugía'; }
+        const fd=new Date(y,m,d); fd.setHours(0,0,0,0);
+        const esPasado = fd < hoy;
+        let cls='cal-dia d'+(esPasado?' pasado':'');
+        let em=''; let lbl=''; let sn='';
+        if(d===cirDia)     { cls+=' cirugia'; em='🏥'; lbl='Cirugía'; }
         else if(d===altDia){ cls+=' alta';    em='🏠'; lbl='Alta'; }
-        else if(ses.has(d)){ cls+=' masaje';  em='🤲';
-          const idx=sesiones.findIndex(s=>s.getFullYear()===y&&s.getMonth()===m&&s.getDate()===d);
+        else if(ses.has(d)){
+          cls += esPasado ? ' masaje-done' : ' masaje';
+          em = esPasado ? '✅' : '🤲';
+          const idx=todasSesiones.findIndex(s=>s.getFullYear()===y&&s.getMonth()===m&&s.getDate()===d);
           if(idx>=0) sn=`<div style="font-size:0.55rem;font-weight:800;">S${idx+1}</div>`;
         }
-        if(fd.toDateString()===hoy.toDateString()) cls+=' hoy';
-        htmlM+=`<div class="${cls}">${em?`<span style="font-size:0.85rem;">${em}</span>`:''}<span>${d}</span>${lbl?`<div style="font-size:0.52rem;font-weight:700;">${lbl}</div>`:sn}</div>`;
+        if(fd.getTime()===hoy.getTime()) cls+=' hoy';
+        htmlM+=`<div class="${cls}" style="${esPasado&&!ses.has(d)&&d!==cirDia&&d!==altDia?'opacity:0.35;':''}">${em?`<span style="font-size:0.85rem;">${em}</span>`:''}<span>${d}</span>${lbl?`<div style="font-size:0.52rem;font-weight:700;">${lbl}</div>`:sn}</div>`;
       }
       htmlM+=`</div></div>`;
     });
     document.getElementById('cal-meses').innerHTML=htmlM;
 
+    // lista solo sesiones pendientes
     let htmlL='';
-    sesiones.forEach((d,i)=>{
-      htmlL+=`<div class="cal-sesion-row">
-        <div class="cal-sesion-num">${i+1}</div>
-        <div><div class="cal-sesion-fecha">${fmtLargo(d)}</div>
-        <div class="cal-sesion-dia">${DS[d.getDay()]} · Día ${i*frecSel+inicioSel} post-operatorio</div></div>
-        <span>🤲</span></div>`;
-    });
+    if(sesionesHoy.length===0){
+      htmlL='<div style="font-size:0.83rem;color:var(--gris);padding:10px 0;">Todas las sesiones ya fueron realizadas.</div>';
+    } else {
+      sesionesHoy.forEach((d)=>{
+        const idx=todasSesiones.findIndex(s=>s.toDateString()===d.toDateString());
+        htmlL+=`<div class="cal-sesion-row">
+          <div class="cal-sesion-num">${idx+1}</div>
+          <div><div class="cal-sesion-fecha">${fmtLargo(d)}</div>
+          <div class="cal-sesion-dia">${DS[d.getDay()]} · Día ${idx*frecSel+inicioSel} post-operatorio</div></div>
+          <span>🤲</span></div>`;
+      });
+    }
     document.getElementById('cal-lista').innerHTML=htmlL;
     document.getElementById('cal-resumen').innerHTML=
-      `<strong>Resumen:</strong> ${sesSel} sesiones · inicio el ${fmtCorto(sesiones[0])} (día ${inicioSel} post-op) · cada ${frecSel} día${frecSel>1?'s':''} · última sesión: ${fmtCorto(ultima)}.`;
+      `<strong>Resumen:</strong> ${sesSel} sesiones totales · <strong>${pendientes} pendiente${pendientes!==1?'s':''}</strong> · inicio ${fmtCorto(todasSesiones[0])} · cada ${frecSel} día${frecSel>1?'s':''} · última: ${fmtCorto(ultima)}.`;
 
     document.getElementById('cal-resultado').style.display='block';
     setTimeout(()=>document.getElementById('cal-resultado').scrollIntoView({behavior:'smooth',block:'start'}),100);
